@@ -160,48 +160,42 @@ ProtobufPlugin.prototype.singleOutput = function (files, cb) {
 };
 
 ProtobufPlugin.prototype.multipleOutput = function (files, cb) {
-    var promise = [];
     var self = this;
-    files.forEach(function (file) {
-        promise.push(new Promise(function (resolve, reject) {
+    var root = path.relative(process.cwd(), this.options.output);
+    mkdir.sync(root);
+    const promises = files.map(function (file) {
+        return new Promise(function (resolve, reject) {
             let command = [].concat(self.command);
             command.push(file);
             pbjs.main(command, function (err, output) {
                 if (err) {
+                    console.log('[protobuf plugin] error: ', err);
                     reject(err);
                 } else {
-                    resolve({
-                        output: output,
-                        file: file
+                    var outputPath;
+                    if (typeof self.options.output === 'function') {
+                        outputPath = self.options.output(file);
+                    } else {
+                        outputPath = path.join(self.options.output, path.parse(file).name + '.js');
+                    }
+                    mkdir.sync(path.parse(outputPath).dir);
+                    fs.writeFile(outputPath, output, function (error) {
+                        if (error) {
+                            console.log('[protobuf plugin] output error: ', error);
+                            reject(error)
+                        }
+                        if (self.options.typescript) {
+                            self.generateTypescriptDefinitions(outputPath)
+                        }
+                        resolve();
                     });
                 }
             });
-        }));
-    });
-    Promise.all(promise)
-    .then(function (res) {
-        res.forEach(function (result) {
-            var output = result.output;
-            var file = result.file;
-            var outputPath;
-            if (typeof self.options.output === 'function') {
-                outputPath = self.options.output(file);
-            } else {
-                outputPath = path.join(self.options.output, path.parse(file).name + '.js');
-            }
-            mkdir.sync(path.parse(outputPath).dir);
-            fs.writeFile(outputPath, output, function (error) {
-                if (error) {
-                    console.log('[protobuf plugin] output error: ', error);
-                }
-                if (self.options.typescript) {
-                    self.generateTypescriptDefinitions(outputPath)
-                }
-            });
         });
+    });
+    Promise.all(promises).then(function () {
         cb();
-    })
-    .catch(function (err) {
+    }).catch(function (err) {
         console.log('[protobuf plugin] promise reject error: ', err);
         cb();
     });
